@@ -1,6 +1,6 @@
 ---
 title: Cppcheck manual
-subtitle: Version 1.90 dev
+subtitle: Version 2.2.99
 author: Cppcheck team
 lang: en
 documentclass: report
@@ -8,7 +8,7 @@ documentclass: report
 
 # Introduction
 
-Cppcheck is an analysis tool for C/C++ code. It provides unique code analysis to detect bugs and focuses on detecting undefined behaviour and dangerous coding constructs. The goal is to detect only real errors in the code (i.e. have very few false positives).
+Cppcheck is an analysis tool for C/C++ code. It provides unique code analysis to detect bugs and focuses on detecting undefined behaviour and dangerous coding constructs. The goal is to detect only real errors in the code (i.e. have very few false positives). Cppcheck is designed to be able to analyze your C/C++ code even if it has non-standard syntax (common in embedded projects).
 
 Supported code and platforms:
 
@@ -82,6 +82,16 @@ We don't know which approach (project file or manual configuration) will give yo
 
 Later chapters will describe this in more detail.
 
+### Check files matching a given file filter
+
+With `--file-filter=<str>` you can set a file filter and only those files matching the filter will be checked.
+
+For example: if you want to check only those files and folders starting from a subfolder src/ that start with "test" you have to type:
+
+    cppcheck src/ --file-filter=src/test*
+
+Cppcheck first collects all files in src/ and will apply the filter after that. So the filter must start with the given start folder. 
+
 ### Excluding a file or folder from checking
 
 To exclude a file or folder, there are two options. The first option is to only provide the paths and files you want to check.
@@ -94,9 +104,19 @@ The second option is to use -i, with it you specify files/paths to ignore. With 
 
     cppcheck -isrc/c src
 
-This option does not currently work with the `--project` option and is only valid when supplying an input directory. To ignore multiple directories supply the -i multiple times. The following command ignores both the src/b and src/c directories.
+This option is only valid when supplying an input directory. To ignore multiple directories supply the -i multiple times. The following command ignores both the src/b and src/c directories.
 
     cppcheck -isrc/b -isrc/c
+
+### Clang parser (experimental)
+
+By default Cppcheck uses an internal C/C++ parser. However there is an experimental option to use the Clang parser instead.
+
+Install `clang`. Then use Cppcheck option `--clang`.
+
+Technically, Cppcheck will execute `clang` with its `-ast-dump` option. The Clang output is then imported and converted into our normal Cppcheck format. And then normal Cppcheck analysis is performed on that.
+
+You can also pass a custom Clang executable to the option by using e.g. `--clang=clang-10`. You can also pass it with a path. On Windows it will append the `.exe` extension unless you use a path.
 
 ## Severities
 
@@ -104,15 +124,15 @@ The possible severities for messages are:
 
 **error**
 
-used when bugs are found
+when code is executed there is some bad behavior (undefined behavior, leak)
 
 **warning**
 
-suggestions about defensive programming to prevent bugs
+when code is executed there might be undefined behavior
 
 **style**
 
-stylistic issues related to code cleanup (unused functions, redundant code, constness, and such)
+stylistic issues (unused functions, redundant code, constness, operator precedence, possible mistakes, and such)
 
 **performance**
 
@@ -120,11 +140,66 @@ Suggestions for making the code faster. These suggestions are only based on comm
 
 **portability**
 
-portability warnings. 64-bit portability. code might work different on different compilers. etc.
+portability warnings. Implementation defined behavior. 64-bit portability. Some undefined behavior that probably works "as you want". etc.
 
 **information**
 
-Configuration problems. The recommendation is to only enable these during configuration.
+Configuration problems. If you get such output then your code is ok but your cppcheck configuration could be improved.
+
+## Possible speedup analysis of template code
+
+Cppcheck instantiates the templates in your code.
+
+If your templates are recursive this can lead to slow analysis that uses a lot
+of memory. Cppcheck will write information messages when there are potential
+problems.
+
+Example code:
+
+    template <int i>
+    void a()
+    {
+        a<i+1>();
+    }
+
+    void foo()
+    {
+        a<0>();
+    }
+
+Cppcheck output:
+
+    test.cpp:4:5: information: TemplateSimplifier: max template recursion (100) reached for template 'a<101>'. You might want to limit Cppcheck recursion. [templateRecursion]
+        a<i+1>();
+        ^
+
+As you can see Cppcheck has instantiated `a<i+1>` until `a<101>` was reached
+and then it bails out.
+
+To limit template recursion you can;
+
+- add template specialisation
+- configure cppcheck (in the GUI project file dialog)
+
+Example code with template specialisation:
+
+    template <int i>
+    void a()
+    {
+        a<i+1>();
+    }
+
+    void foo()
+    {
+        a<0>();
+    }
+
+    #ifdef __cppcheck__
+    template<> void a<3>() {}
+    #endif
+
+You can pass `-D__cppcheck__` when checking this code.
+
 
 # Importing project
 
@@ -138,6 +213,10 @@ You can import and use Cppcheck GUI project files in the command line tool:
 
 The Cppcheck GUI has a few options that are not available in the command line directly. To use these options you can import a GUI project file. We want to keep the command line tool usage simple and limit the options by intention.
 
+To ignore certain folders in the project you can use `-i`. This will skip analysis of source files in the `foo` folder.
+
+    cppcheck --project=foobar.cppcheck -ifoo
+
 ## CMake
 
 Generate a compile database:
@@ -147,6 +226,11 @@ Generate a compile database:
 The file `compile_commands.json` is created in the current folder. Now run Cppcheck like this:
 
     cppcheck --project=compile_commands.json
+
+To ignore certain folders you can use `-i`. This will skip analysis of source files in the `foo` folder.
+
+    cppcheck --project=compile_commands.json -ifoo
+
 
 ## Visual Studio
 
@@ -160,13 +244,27 @@ Running Cppcheck on a Visual Studio project:
 
     cppcheck --project=foobar.vcxproj
 
+Both options will analyze all available configurations in the project(s).
+Limiting on a single configuration:
+
+    cppcheck --project=foobar.sln "--project-configuration=Release|Win32"
+
 In the `Cppcheck GUI` you have the choice to only analyze a single debug configuration. If you want to use this choice on the command line then create a `Cppcheck GUI` project with this activated and then import the GUI project file on the command line.
+
+To ignore certain folders in the project you can use `-i`. This will skip analysis of source files in the `foo` folder.
+
+    cppcheck --project=foobar.vcxproj -ifoo
 
 ## C++ Builder 6
 
 Running Cppcheck on a C++ Builder 6 project:
 
     cppcheck --project=foobar.bpr
+
+
+To ignore certain folders in the project you can use `-i`. This will skip analysis of source files in the `foo` folder.
+
+    cppcheck --project=foobar.bpr -ifoo
 
 ## Other
 
@@ -176,13 +274,55 @@ In Linux you can use for instance the `bear` (build ear) utility to generate a c
 
     bear make
 
+# Preprocessor Settings
+
+If you use `--project` then Cppcheck will use the preprocessor settings from the imported project. Otherwise you'll probably want to configure the include paths, defines, etc.
+
+## Defined and not defined
+
+Here is a file that has 2 preprocessor configurations (with A defined and without A defined):
+
+    #ifdef A
+        x = y;
+    #else
+        x = z;
+    #endif
+
+By default Cppcheck will check all preprocessor configurations (except those that have #error in them). So the above code will by default be analyzed both with `A` defined and without `A` defined.
+
+You can use `-D` and/or `-U` to change this. When you use `-D`, cppcheck will by default only check the given configuration and nothing else. This is how compilers work. But you can use `--force` or `--max-configs` to override the number of configurations.
+
+Check all configurations:
+
+    cppcheck file.c
+
+Only check the configuration A:
+
+    cppcheck -DA file.c
+
+Check all configurations when macro A is defined
+
+    cppcheck -DA --force file.c
+
+Another useful flag might be `-U`. It tells Cppcheck that a macro is not defined. Example usage:
+
+    cppcheck -UX file.c
+
+## Include paths
+
+To add an include path, use `-I`, followed by the path.
+
+Cppcheck's preprocessor basically handles includes like any other preprocessor. However, while other preprocessors stop working when they encounter a missing header, cppcheck will just print an information message and continues parsing the code.
+
+The purpose of this behaviour is that cppcheck is meant to work without necessarily seeing the entire code. Actually, it is recommended to not give all include paths. While it is useful for cppcheck to see the declaration of a class when checking the implementation of its members, passing standard library headers is highly discouraged because it will result in worse results and longer checking time. For such cases, .cfg files (see below) are the better way to provide information about the implementation of functions and types to cppcheck.
+
 # Platform
 
 You should use a platform configuration that match your target.
 
 By default Cppcheck uses native platform configuration that works well if your code is compiled and executed locally.
 
-Cppcheck has builtin configurations for Unix and Windows targets. You can easily use these with the --platform command line flag.
+Cppcheck has builtin configurations for Unix and Windows targets. You can easily use these with the `--platform` command line flag.
 
 You can also create your own custom platform configuration in a XML file. Here is an example:
 
@@ -204,49 +344,22 @@ You can also create your own custom platform configuration in a XML file. Here i
       </sizeof>
     </platform>
 
-# Preprocessor Settings
+# C/C++ Standard
 
-If you use `--project` then Cppcheck will use the preprocessor settings from the imported project. Otherwise you'll probably want to configure the include paths, defines, etc.
+Use `--std` on the command line to specify a C/C++ standard.
 
-## Defines
+Cppcheck assumes that the code is compatible with the latest C/C++ standard but you can override this.
 
-Here is a file that has 2 preprocessor configurations (with A defined and without A defined):
+The available options are:
 
-    #ifdef A
-        x = y;
-    #else
-        x = z;
-    #endif
-
-By default Cppcheck will check all preprocessor configurations (except those that have #error in them). So the above code will by default be analyzed both with `A` defined and without `A` defined.
-
-You can use `-D` to change this. When you use `-D`, cppcheck will by default only check the given configuration and nothing else. This is how compilers work. But you can use `--force` or `--max-configs` to override the number of configurations.
-
-Check all configurations:
-
-    cppcheck file.c
-
-Only check the configuration A:
-
-    cppcheck -DA file.c
-
-Check all configurations when macro A is defined
-
-    cppcheck -DA --force file.c
-
-Another useful flag might be `-U`. It tells Cppcheck that a macro is not defined. Example usage:
-
-    cppcheck -UX file.c
-
-That will mean that X is not defined. Cppcheck will not check what happens when X is defined.
-
-## Include paths
-
-To add an include path, use `-I`, followed by the path.
-
-Cppcheck's preprocessor basically handles includes like any other preprocessor. However, while other preprocessors stop working when they encounter a missing header, cppcheck will just print an information message and continues parsing the code.
-
-The purpose of this behaviour is that cppcheck is meant to work without necessarily seeing the entire code. Actually, it is recommended to not give all include paths. While it is useful for cppcheck to see the declaration of a class when checking the implementation of its members, passing standard library headers is highly discouraged because it will result in worse results and longer checking time. For such cases, .cfg files (see below) are the better way to provide information about the implementation of functions and types to cppcheck.
+- c89: C code is C89 compatible
+- c99: C code is C99 compatible
+- c11: C code is C11 compatible (default)
+- c++03: C++ code is C++03 compatible
+- c++11: C++ code is C++11 compatible
+- c++14: C++ code is C++14 compatible
+- c++17: C++ code is C++17 compatible
+- c++20: C++ code is C++20 compatible (default)
 
 # Suppressions
 
@@ -280,10 +393,10 @@ You can create a suppressions file. Example:
     memleak:src/file1.cpp
     exceptNew:src/file1.cpp
 
-    // suppress all uninitvar errors in all files
-    uninitvar
+    uninitvar // suppress all uninitvar errors in all files
 
 Note that you may add empty lines and comments in the suppressions file.
+Comments must start with `#` or `//` and be at the start of the line, or after the suppression line.
 
 You can use the suppressions file like this:
 
@@ -325,7 +438,25 @@ The output is:
     cppcheck test.c
     [test.c:3]: (error) Array 'arr[5]' index 10 out of bounds
 
-To suppress the error message, a comment can be added:
+To activate inline suppressions:
+
+    cppcheck --inline-suppr test.c
+
+### Format
+
+You can suppress a warning `aaaa` with:
+
+    // cppcheck-suppress aaaa
+
+Suppressing multiple ids in one comment by using []:
+
+    // cppcheck-suppress [aaaa, bbbb]
+
+### Comment before code or on same line
+
+The comment can be put before the code or at the same line as the code;
+
+Before the code:
 
     void f() {
         char arr[5];
@@ -334,18 +465,79 @@ To suppress the error message, a comment can be added:
         arr[10] = 0;
     }
 
-Now the `--inline-suppr` flag can be used to suppress the warning. No error is reported when invoking cppcheck this way:
+Or at the same line as the code:
 
-    cppcheck --inline-suppr test.c
+    void f() {
+        char arr[5];
+
+        arr[10] = 0;  // cppcheck-suppress arrayIndexOutOfBounds
+    }
+
+In this example there are 2 lines with code and 1 suppression comment. The suppression comment only applies to 1 line: `a = b + c;`.
+
+    void f() {
+        a = b + c; // cppcheck-suppress abc
+        d = e + f;
+    }
+
+As a special case for backwards compatibility, if you have a `{` on its own line and a suppression comment after that, then that will suppress warnings for both the current and next line. This example will suppress `abc` warnings both for `{` and for `a = b + c;`:
+
+    void f()
+    { // cppcheck-suppress abc
+        a = b + c;
+    }
+
+### Multiple suppressions
+
+For a line of code there might be several warnings you want to suppress.
+
+There are several options;
+
+Using 2 suppression comments before code:
+
+    void f() {
+        char arr[5];
+
+        // cppcheck-suppress arrayIndexOutOfBounds
+        // cppcheck-suppress zerodiv
+        arr[10] = arr[10] / 0;
+    }
+
+Using 1 suppression comment before the code:
+
+    void f() {
+        char arr[5];
+
+        // cppcheck-suppress[arrayIndexOutOfBounds,zerodiv]
+        arr[10] = arr[10] / 0;
+    }
+
+Suppression comment on the same line as the code:
+
+    void f() {
+        char arr[5];
+
+        arr[10] = arr[10] / 0;  // cppcheck-suppress[arrayIndexOutOfBounds,zerodiv]
+    }
+
+
+### Symbol name
 
 You can specify that the inline suppression only applies to a specific symbol:
 
-    // cppcheck-suppress arrayIndexOutOfBounds symbolName=arr
+    // cppcheck-suppress aaaa symbolName=arr
 
-You can write comments for the suppress, however is recommended to use ; or // to specify where they start:
+Or
 
-    // cppcheck-suppress arrayIndexOutOfBounds ; some comment
-    // cppcheck-suppress arrayIndexOutOfBounds // some comment
+    // cppcheck-suppress[aaaa symbolName=arr, bbbb]
+
+### Comment about suppression
+
+You can write comments about a suppression like so:
+
+    // cppcheck-suppress[warningid] some comment
+    // cppcheck-suppress warningid ; some comment
+    // cppcheck-suppress warningid // some comment
 
 # XML output
 
@@ -604,23 +796,23 @@ Cppcheck is distributed with a few addons which are listed below.
 
 ### cert.py
 
-[cert.py](https://github.com/danmar/cppcheck/blob/master/addons/cert.py) checks for compliance with the safe programming standard [SEI CERT](http://www.cert.org/secure-coding/).
+[cert.py](https://github.com/danmar/cppcheck/blob/main/addons/cert.py) checks for compliance with the safe programming standard [SEI CERT](http://www.cert.org/secure-coding/).
 
 ### misra.py
 
-[misra.py](https://github.com/danmar/cppcheck/blob/master/addons/misra.py) is used to verify compliance with MISRA C 2012 - a proprietary set of guidelines to avoid such questionable code, developed for embedded systems.
+[misra.py](https://github.com/danmar/cppcheck/blob/main/addons/misra.py) is used to verify compliance with MISRA C 2012 - a proprietary set of guidelines to avoid such questionable code, developed for embedded systems.
 
-Since this standard is proprietary, cppcheck does not display error text by specifying only the number of violated rules (for example, [c2012-21.3]). If you want to display full texts for violated rules, you will need to create a text file containing MISRA rules, which you will have to pass when calling the script with `--rule-texts` key. Some examples of rule texts files available in [tests directory](https://github.com/danmar/cppcheck/blob/master/addons/test/misra/).
+Since this standard is proprietary, cppcheck does not display error text by specifying only the number of violated rules (for example, [c2012-21.3]). If you want to display full texts for violated rules, you will need to create a text file containing MISRA rules, which you will have to pass when calling the script with `--rule-texts` key. Some examples of rule texts files available in [tests directory](https://github.com/danmar/cppcheck/blob/main/addons/test/misra/).
 
 You can also suppress some unwanted rules using `--suppress-rules` option. Suppressed rules should be set as comma-separated listed, for example: `--suppress-rules 21.1,18.7`. The full list of supported rules is available on [Cppcheck](http://cppcheck.sourceforge.net/misra.php) home page.
 
 ### y2038.py
 
-[y2038.py](https://github.com/danmar/cppcheck/blob/master/addons/y2038.py) checks Linux system for [year 2038 problem](https://en.wikipedia.org/wiki/Year_2038_problem) safety. This required [modified environment](https://github.com/3adev/y2038). See complete description [here](https://github.com/danmar/cppcheck/blob/master/addons/doc/y2038.txt).
+[y2038.py](https://github.com/danmar/cppcheck/blob/main/addons/y2038.py) checks Linux system for [year 2038 problem](https://en.wikipedia.org/wiki/Year_2038_problem) safety. This required [modified environment](https://github.com/3adev/y2038). See complete description [here](https://github.com/danmar/cppcheck/blob/main/addons/doc/y2038.txt).
 
 ### threadsafety.py
 
-[threadsafety.py](https://github.com/danmar/cppcheck/blob/master/addons/threadsafety.py) analyse Cppcheck dump files to locate thread safety issues like static local objects used by multiple threads.
+[threadsafety.py](https://github.com/danmar/cppcheck/blob/main/addons/threadsafety.py) analyse Cppcheck dump files to locate thread safety issues like static local objects used by multiple threads.
 
 ## Running Addons
 
@@ -689,3 +881,184 @@ An example usage:
 
     ./cppcheck gui/test.cpp --xml 2> err.xml
     htmlreport/cppcheck-htmlreport --file=err.xml --report-dir=test1 --source-dir=.
+
+# Bug hunting
+
+If you want to detect most bugs and can accept false alarms then Cppcheck has analysis for that.
+
+This analysis is "soundy"; it should diagnose most bugs reported in CVEs and from dynamic analysis.
+
+You have to expect false alarms. However Cppcheck tries to limit false alarms. The purpose of the data flow analysis is to limit false alarms.
+
+Some possible use cases;
+
+- you are writing new code and want to ensure it is safe.
+- you are reviewing code and want to get hints about possible UB.
+- you need extra help troubleshooting a weird bug.
+- you want to check if a release candidate is safe.
+
+The intention is that this will be used primarily in the GUI.
+
+## Activate this analysis
+
+On the command line you can use `--bug-hunting`. In the GUI goto the project
+dialog. In the `Analysis` tab there is a check box for `Bug hunting`.
+
+## Contracts
+
+To handle false alarms and improve the analysis you are encouraged to use
+contracts.
+
+To provide contracts, you can either annotate your code or configure the
+contracts in the GUI.
+
+There exists various annotations for C and C++ code. gcc has attributes, there
+are SAL annotations, and then there are standard C++ annotations. It is our
+goal to handle various types of annotations, if you can reuse those annotations
+in Cppcheck analysis that will be an extra benefit.
+
+### Function contracts
+
+Here is an example code:
+
+    int foo(int x)
+    {
+        return 100 / x;
+    }
+
+The bug hunting analysis will warn about a division by zero. Right now, it
+can't be proven that x can't be 0 here. A function contract can be used to
+tell Cppcheck what input "foo(x)" expects.
+
+#### Annotation
+
+You can use "C++ function contracts" syntax both in C and C++.
+
+For C++ code you can write:
+
+    int foo(int x)
+    [[expects: x > 0]]
+    {
+        return 100 / x;  // No division by zero
+    }
+
+    void bar()
+    {
+        foo(-10);  // Warning: Contract is violated!
+    }
+
+For C code you can write (works in C++ too):
+
+    #ifdef __cppcheck__
+    #define Expects(EXPR) [[expects: EXPR]]
+    #else
+    #define Expects(EXPR)
+    #endif
+
+    int foo(int x)
+    Expects(x > 0)
+    {
+        return 100 / x;
+    }
+
+    void bar()
+    {
+        foo(-10);  // Warning: Contract is violated!
+    }
+
+
+#### Configuration in gui
+
+You can configure contracts in the GUI.
+
+Example code:
+
+    int foo(int x)
+    {
+        return 100 / x;
+    }
+
+If you run bug hunting analysis on this code then because Cppcheck can't prove
+that x can't be 0 you will get a warning about division by zero.
+
+Either:
+
+- Right click on that warning and select "Edit contract..".
+- Open the "Functions" tab at the bottom and lookup the "foo(x)" function. Then
+   double click on that.
+
+A dialog box is shown where you can configure the contract for function "foo(x)".
+A textbox allows you to edit the "Expects" expression.
+
+Enter the expression "x > 0" in the dialog box and click OK.
+
+Now if you run analysis the division by zero warning will be gone. As for
+annotations, if the contract is violated somewhere then you will get a warning.
+
+
+
+### Variable contracts
+
+Here is an example code:
+
+    int x;
+
+    int foo()
+    {
+        return 100 / x;
+    }
+
+The bug hunting analysis will warn about a division by zero. It can't be proven
+that x can't be 0.
+
+A variable contract specify the allowed values for a variable. Cppcheck use variable
+contracts both when a variable is read and written:
+- When a variable is read, Cppcheck will assume that the contract is met. This
+means you can avoid false positives for impossible variable values.
+- When a variable is written, Cppcheck will ensure that its contract is not
+violated. If it can't be determined that the contract is met you will get a
+warning.
+
+#### Annotation
+
+You can use Cppcheck attributes `__cppcheck_low__(value)` and
+`__cppcheck_high__(value)` to configure min and max values for variables
+and types.
+
+Example code:
+
+    __cppcheck_low__(1) int x;
+
+    int foo()
+    {
+        return 100 / x;  // No division by zero
+    }
+
+Tip: You can create an integer type with a limited value range. For instance
+here is an unsigned integer type that can only have the values 0-100:
+
+    typedef __cppcheck_high__(100) unsigned int percent_t;
+    percent_t x;
+    x = 110; // <- Cppcheck will warn about this assignment
+
+
+#### GUI
+
+To configure variable contracts in the GUI, open the "Variables" tab at the
+bottom.
+
+Lookup the variable you want to configure and double click on that.
+
+A dialog box is shown for the variable, where you can configure the min and
+max values.
+
+
+## Incomplete analysis
+
+The data flow analysis can analyze simple functions completely but complex functions are not analyzed completely (yet). The data flow analysis will be continuously improved in the future but it will never be perfect.
+
+It is likely that you will get false alarms caused by incomplete data flow analysis. Unfortunately it is unlikely that such false alarms can be fixed by contracts.
+
+
+
+

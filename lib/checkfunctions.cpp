@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -85,7 +85,8 @@ void CheckFunctions::checkProhibitedFunctions()
                 const Library::WarnInfo* wi = mSettings->library.getWarnInfo(tok);
                 if (wi) {
                     if (mSettings->isEnabled(wi->severity) && mSettings->standards.c >= wi->standards.c && mSettings->standards.cpp >= wi->standards.cpp) {
-                        reportError(tok, wi->severity, tok->str() + "Called", wi->message, CWE477, false);
+                        const std::string daca = mSettings->daca ? "prohibited" : "";
+                        reportError(tok, wi->severity, daca + tok->str() + "Called", wi->message, CWE477, false);
                     }
                 }
             }
@@ -264,7 +265,7 @@ void CheckFunctions::checkMathFunctions()
                 // fmod ( x , y) If y is zero, then either a range error will occur or the function will return zero (implementation-defined).
                 else if (Token::Match(tok, "fmod|fmodf|fmodl (")) {
                     const Token* nextArg = tok->tokAt(2)->nextArgument();
-                    if (nextArg && nextArg->isNumber() && MathLib::isNullValue(nextArg->str()))
+                    if (nextArg && MathLib::isNullValue(nextArg->str()))
                         mathfunctionCallWarning(tok, 2);
                 }
                 // pow ( x , y) If x is zero, and y is negative --> division by zero
@@ -328,7 +329,7 @@ void CheckFunctions::memsetZeroBytes()
                 if (WRONG_DATA(arguments.size() != 3U, tok))
                     continue;
                 const Token* lastParamTok = arguments[2];
-                if (lastParamTok->str() == "0")
+                if (MathLib::isNullValue(lastParamTok->str()))
                     memsetZeroBytesError(tok);
             }
         }
@@ -434,6 +435,9 @@ void CheckFunctions::checkLibraryMatchFunctions()
             continue;
 
         if (tok->linkAt(1)->strAt(1) == "(")
+            continue;
+
+        if (tok->function())
             continue;
 
         if (!mSettings->library.isNotLibraryFunction(tok))

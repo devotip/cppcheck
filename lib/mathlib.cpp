@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
 
 
 #include "mathlib.h"
-#include "errorlogger.h"
+#include "errortypes.h"
 #include "utils.h"
 
 #include <cctype>
@@ -319,6 +319,8 @@ MathLib::biguint MathLib::toULongNumber(const std::string & str)
     if (isBin(str)) {
         biguint ret = 0;
         for (std::string::size_type i = str[0] == '0'?2:3; i < str.length(); i++) {
+            if (str[i] != '1' && str[i] != '0')
+                break;
             ret <<= 1;
             if (str[i] == '1')
                 ret |= 1;
@@ -510,6 +512,8 @@ MathLib::bigint MathLib::toLongNumber(const std::string & str)
     if (isBin(str)) {
         bigint ret = 0;
         for (std::string::size_type i = str[0] == '0'?2:3; i < str.length(); i++) {
+            if (str[i] != '1' && str[i] != '0')
+                break;
             ret <<= 1;
             if (str[i] == '1')
                 ret |= 1;
@@ -1289,7 +1293,9 @@ std::string MathLib::tan(const std::string &tok)
 
 std::string MathLib::abs(const std::string &tok)
 {
-    return toString(std::abs(toDoubleNumber(tok)));
+    if (isNegative(tok))
+        return tok.substr(1, tok.length() - 1);
+    return tok;
 }
 
 bool MathLib::isEqual(const std::string &first, const std::string &second)
@@ -1338,11 +1344,16 @@ bool MathLib::isNullValue(const std::string &str)
     if (str.empty() || (!std::isdigit(static_cast<unsigned char>(str[0])) && (str[0] != '.' && str[0] != '-' && str[0] != '+')))
         return false; // Has to be a number
 
+    if (!isInt(str) && !isFloat(str))
+        return false;
+    bool isHex = isIntHex(str) || isFloatHex(str);
     for (char i : str) {
         if (std::isdigit(static_cast<unsigned char>(i)) && i != '0') // May not contain digits other than 0
             return false;
-        if (i == 'E' || i == 'e')
+        if (i == 'p' || i == 'P' || (!isHex && (i == 'E' || i == 'e')))
             return true;
+        if (isHex && isxdigit(i) && i != '0')
+            return false;
     }
     return true;
 }
